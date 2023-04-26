@@ -692,9 +692,10 @@ class _LayerNormLinear(torch.autograd.Function):
         # If residual connection is after LN, we need `ln_out`
         # tensor in higher precision, this comes at the cost
         # of an extra fp8 cast.
-        if fp8 and not ctx.fp8_meta["recipe"].override_linear_precision.fprop:
+        if fp8:
             fp8_dtype_forward = get_fp8_te_dtype(fp8_meta["recipe"], fprop_tensor=True)
 
+        if fp8 and not fp8_meta["recipe"].override_linear_precision.fprop:
             if not return_layernorm_output:
                 if is_grad_enabled:
                     ln_out, mu, rsigma = layernorm_fwd_fp8(
@@ -753,7 +754,7 @@ class _LayerNormLinear(torch.autograd.Function):
         else:
             ln_out_total = ln_out
 
-        if fp8 and not ctx.fp8_meta["recipe"].override_linear_precision.fprop:
+        if fp8 and not fp8_meta["recipe"].override_linear_precision.fprop:
             bias_dtype = (
                 torch.bfloat16
                 if activation_dtype == torch.float32
@@ -815,7 +816,7 @@ class _LayerNormLinear(torch.autograd.Function):
                 bias=bias,
                 use_bias=use_bias,
             )
-            
+
             if fp8:
                 if update_fp8_weights:
                     if is_grad_enabled:
@@ -834,6 +835,13 @@ class _LayerNormLinear(torch.autograd.Function):
                             fp8_meta["scaling_fwd"],
                             tex.FP8FwdTensors.GEMM1_WEIGHT,
                             fp8_dtype_forward)
+
+                ln_out = cast_to_fp8(
+                     ln_out,
+                     fp8_meta["scaling_fwd"],
+                     tex.FP8FwdTensors.GEMM1_INPUT,
+                     fp8_dtype_forward,
+                 )
 
         if is_grad_enabled:
             ctx.save_for_backward(
@@ -1432,11 +1440,9 @@ class _Linear(torch.autograd.Function):
         ), "Input and weight dimensions are not compatible for FP8 execution."
 
         update_fp8_weights = is_first_microbatch is None or is_first_microbatch
-
         # Cast for native AMP
         inputmat = cast_if_needed(inputmat, activation_dtype)
         inputmat_no_fp8 = inputmat
-
         if fp8:
             fp8_dtype_forward = get_fp8_te_dtype(fp8_meta["recipe"], fprop_tensor=True)
 
@@ -1538,7 +1544,7 @@ class _Linear(torch.autograd.Function):
                 bias=bias,
                 use_bias=use_bias,
             )
-            
+
             if fp8:
                 if update_fp8_weights:
                     if is_grad_enabled:
@@ -2083,8 +2089,10 @@ class _LayerNormMLP(torch.autograd.Function):
         # If residual connection is after LN, we need `ln_out`
         # tensor in higher precision, this comes at the cost
         # of an extra fp8 cast.
-        if fp8 and not ctx.fp8_meta["recipe"].override_linear_precision.fprop:
+        if fp8:
             fp8_dtype_forward = get_fp8_te_dtype(fp8_meta["recipe"], fprop_tensor=True)
+
+        if fp8 and not fp8_meta["recipe"].override_linear_precision.fprop:
             if not return_layernorm_output:
                 if is_grad_enabled:
                     ln_out, mu, rsigma = layernorm_fwd_fp8(
@@ -2136,7 +2144,7 @@ class _LayerNormMLP(torch.autograd.Function):
         else:
             ln_out_total = ln_out
 
-        if fp8 and not ctx.fp8_meta["recipe"].override_linear_precision.fprop:
+        if fp8 and not fp8_meta["recipe"].override_linear_precision.fprop:
             bias_dtype = (
                 torch.bfloat16
                 if activation_dtype == torch.float32
@@ -2303,6 +2311,21 @@ class _LayerNormMLP(torch.autograd.Function):
                             tex.FP8FwdTensors.GEMM2_WEIGHT,
                             fp8_dtype_forward,
                         )
+
+                ln_out = cast_to_fp8(
+                     ln_out,
+                     fp8_meta["scaling_fwd"],
+                     tex.FP8FwdTensors.GEMM1_INPUT,
+                     fp8_dtype_forward,
+                 )
+
+                gelu_out = cast_to_fp8(
+                      gelu_out,
+                      fp8_meta["scaling_fwd"],
+                      tex.FP8FwdTensors.GEMM2_INPUT,
+                      fp8_dtype_forward,
+                  )
+
         if is_grad_enabled:
             ctx.save_for_backward(
                 inputmat,
