@@ -133,7 +133,7 @@ class DelayedScaling:
 
     def __post_init__(self) -> None:
         assert self.fp8_format != Format.E5M2, "Pure E5M2 training is not supported."
-        assert self.override_linear_precision in (
-            (False, False, False),
-            (False, False, True),
-        ), "Only wgrad GEMM override is currently supported."
+        #assert self.override_linear_precision in (
+        #    (False, False, False),
+        #    (False, False, True),
+        #), "Only wgrad GEMM override is currently supported."
