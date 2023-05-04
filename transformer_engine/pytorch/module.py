@@ -673,8 +673,10 @@ class _LayerNormLinear(torch.autograd.Function):
         fwd_ln_sm_margin: int,
         bwd_ln_sm_margin: int,
         zero_centered_gamma: bool,
+        use_bf16_fprop: bool,
     ) -> Union[Tuple[torch.Tensor, ...], torch.Tensor]:
         # Make sure input dimensions are compatible
+        #print(f'====LayerNormLinear: {use_bf16_fprop}')
         in_features = ln_weight.numel()
         assert inp.shape[-1] == in_features, "GEMM not possible"
         inputmat = inp.view((-1, in_features))
@@ -695,7 +697,7 @@ class _LayerNormLinear(torch.autograd.Function):
         if fp8:
             fp8_dtype_forward = get_fp8_te_dtype(fp8_meta["recipe"], fprop_tensor=True)
 
-        if fp8 and not fp8_meta["recipe"].override_linear_precision.fprop:
+        if fp8 and not (fp8_meta["recipe"].override_linear_precision.fprop or use_bf16_fprop):
             if not return_layernorm_output:
                 if is_grad_enabled:
                     ln_out, mu, rsigma = layernorm_fwd_fp8(
@@ -754,7 +756,7 @@ class _LayerNormLinear(torch.autograd.Function):
         else:
             ln_out_total = ln_out
 
-        if fp8 and not fp8_meta["recipe"].override_linear_precision.fprop:
+        if fp8 and not (fp8_meta["recipe"].override_linear_precision.fprop or use_bf16_fprop):
             bias_dtype = (
                 torch.bfloat16
                 if activation_dtype == torch.float32
@@ -1063,6 +1065,7 @@ class _LayerNormLinear(torch.autograd.Function):
             None,
             None,
             None,
+            None,
         )
 
 
@@ -1313,6 +1316,7 @@ class LayerNormLinear(TransformerEngineBaseModule):
         weight: Optional[torch.Tensor] = None,
         bias: Optional[torch.Tensor] = None,
         is_first_microbatch: Optional[bool] = None,
+        use_bf16_fprop: bool = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, ...]]:
         """
         Apply layer normalization to the input followed by a linear transformation.
@@ -1388,6 +1392,7 @@ class LayerNormLinear(TransformerEngineBaseModule):
                 self.fwd_ln_sm_margin,
                 self.bwd_ln_sm_margin,
                 self.zero_centered_gamma,
+                use_bf16_fprop,
             )
             out = fwd_fn(*args)
 
@@ -1430,8 +1435,10 @@ class _Linear(torch.autograd.Function):
         activation_dtype: torch.dtype,
         parallel_mode: Union[str, None],
         is_grad_enabled: bool,
+        use_bf16_fprop: bool,
     ) -> torch.Tensor:
         # Make sure input dimensions are compatible
+        #print(f'++++Linear: {use_bf16_fprop}')
         in_features = weight.shape[-1]
         assert inp.shape[-1] == in_features, "GEMM not possible"
         inputmat = inp.view((-1, in_features))
@@ -1470,7 +1477,7 @@ class _Linear(torch.autograd.Function):
                 ), None
 
         # Column Parallel Linear
-        if not fp8_meta["recipe"].override_linear_precision.fprop:
+        if not (fp8_meta["recipe"].override_linear_precision.fprop or use_bf16_fprop):
             if parallel_mode == "column" and sequence_parallel:
                 inputmat_total, _ = gather_along_first_dim(inputmat, tp_group)
             else:
@@ -1481,7 +1488,7 @@ class _Linear(torch.autograd.Function):
             else:
                 inputmat_total = inputmat_no_fp8
 
-        if fp8 and not fp8_meta["recipe"].override_linear_precision.fprop:
+        if fp8 and not (fp8_meta["recipe"].override_linear_precision.fprop or use_bf16_fprop):
             bias_dtype = (
                 torch.bfloat16
                 if activation_dtype == torch.float32
@@ -1752,6 +1759,7 @@ class _Linear(torch.autograd.Function):
             None,
             None,
             None,
+            None,
         )
 
 
@@ -1954,6 +1962,7 @@ class Linear(TransformerEngineBaseModule):
         weight: Optional[torch.Tensor] = None,
         bias: Optional[torch.Tensor] = None,
         is_first_microbatch: Optional[bool] = None,
+        use_bf16_fprop: bool = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, ...]]:
         """
         Apply the linear transformation to the input.
@@ -2022,6 +2031,7 @@ class Linear(TransformerEngineBaseModule):
                 self.activation_dtype,
                 self.parallel_mode,
                 torch.is_grad_enabled(),
+                use_bf16_fprop,
             )
             out = linear_fn(*args)
 
@@ -2070,8 +2080,10 @@ class _LayerNormMLP(torch.autograd.Function):
         fwd_ln_sm_margin: int,
         bwd_ln_sm_margin: int,
         zero_centered_gamma: bool,
+        use_bf16_fprop: bool,
     ) -> Union[Tuple[torch.Tensor, ...], torch.Tensor]:
         # Make sure input dimensions are compatible
+        #print(f'****LayerNormMLP: {use_bf16_fprop}')
         in_features = ln_weight.numel()
         assert inp.shape[-1] == in_features, "GEMM not possible"
         inputmat = inp.view((-1, in_features))
@@ -2092,7 +2104,7 @@ class _LayerNormMLP(torch.autograd.Function):
         if fp8:
             fp8_dtype_forward = get_fp8_te_dtype(fp8_meta["recipe"], fprop_tensor=True)
 
-        if fp8 and not fp8_meta["recipe"].override_linear_precision.fprop:
+        if fp8 and not (fp8_meta["recipe"].override_linear_precision.fprop or use_bf16_fprop):
             if not return_layernorm_output:
                 if is_grad_enabled:
                     ln_out, mu, rsigma = layernorm_fwd_fp8(
@@ -2144,7 +2156,7 @@ class _LayerNormMLP(torch.autograd.Function):
         else:
             ln_out_total = ln_out
 
-        if fp8 and not fp8_meta["recipe"].override_linear_precision.fprop:
+        if fp8 and not (fp8_meta["recipe"].override_linear_precision.fprop or use_bf16_fprop):
             bias_dtype = (
                 torch.bfloat16
                 if activation_dtype == torch.float32
@@ -2680,6 +2692,7 @@ class _LayerNormMLP(torch.autograd.Function):
             None,
             None,
             None,
+            None,
         )
 
 
@@ -2919,7 +2932,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
         init.zeros_(self.layer_norm_bias)
 
     def forward(
-        self, inp: torch.Tensor, is_first_microbatch: Optional[bool] = None
+        self, inp: torch.Tensor, is_first_microbatch: Optional[bool] = None, use_bf16_fprop: Optional[bool] = False,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, ...]]:
         """
         Apply layer normalization to the input followed by a feedforward network (MLP Block).
@@ -2980,6 +2993,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
                 self.fwd_ln_sm_margin,
                 self.bwd_ln_sm_margin,
                 self.zero_centered_gamma,
+                use_bf16_fprop,
             )
             out = fwd_fn(*args)
 
