@@ -638,6 +638,7 @@ class MultiHeadAttention(torch.nn.Module):
         is_first_microbatch: Optional[bool] = None,
         checkpoint_core_attention: bool = False,
         inference_params: Optional[Any] = None,
+        use_bf16_fprop: bool = False,
     ) -> Tuple[Union[torch.Tensor, None], ...]:
         """MultiHeadAttention FWD"""
         # hidden_states: [sq, b, h]
@@ -681,6 +682,7 @@ class MultiHeadAttention(torch.nn.Module):
                 layernorm_qkv_outputs = self.layernorm_qkv(
                     hidden_states,
                     is_first_microbatch=is_first_microbatch,
+                    use_bf16_fprop=use_bf16_fprop,
                 )
                 if self.return_layernorm_output:
                     mixed_x_layer, layernorm_output = layernorm_qkv_outputs
@@ -690,6 +692,7 @@ class MultiHeadAttention(torch.nn.Module):
                 mixed_x_layer = self.qkv(
                     hidden_states,
                     is_first_microbatch=is_first_microbatch,
+                    use_bf16_fprop=use_bf16_fprop,
                 )
 
             if self.qkv_weight_interleaved:
@@ -720,6 +723,7 @@ class MultiHeadAttention(torch.nn.Module):
             mixed_kv_layer = self.key_value(
                 encoder_output,
                 is_first_microbatch=is_first_microbatch,
+                use_bf16_fprop=use_bf16_fprop,
             )
 
             if self.qkv_weight_interleaved:
@@ -749,6 +753,7 @@ class MultiHeadAttention(torch.nn.Module):
                 layernorm_query_outputs = self.layernorm_query(
                     hidden_states,
                     is_first_microbatch=is_first_microbatch,
+                    use_bf16_fprop=use_bf16_fprop,
                 )
                 if self.return_layernorm_output:
                     query_layer, layernorm_output = layernorm_query_outputs
@@ -758,6 +763,7 @@ class MultiHeadAttention(torch.nn.Module):
                 query_layer = self.query_layer(
                     hidden_states,
                     is_first_microbatch=is_first_microbatch,
+                    use_bf16_fprop=use_bf16_fprop,
                 )
 
             # [sq, b, hp] --> [sq, b, np, hn]
@@ -807,7 +813,8 @@ class MultiHeadAttention(torch.nn.Module):
         # =================
 
         attention_output, attention_bias = self.proj(
-            context_layer, is_first_microbatch=is_first_microbatch
+            context_layer, is_first_microbatch=is_first_microbatch,
+            use_bf16_fprop=use_bf16_fprop,
         )
 
         if self.input_layernorm and self.return_layernorm_output:
@@ -1118,6 +1125,7 @@ class TransformerLayer(torch.nn.Module):
         is_first_microbatch: Optional[bool] = None,
         checkpoint_core_attention: bool = False,
         inference_params: Optional[Any] = None,
+        use_bf16_fprop: bool = False,
     ) -> torch.Tensor:
         """
         Transformer Layer: attention block and a feedforward network (MLP)
@@ -1158,9 +1166,7 @@ class TransformerLayer(torch.nn.Module):
                                   otherwise be occupied to store the forward activations until
                                   backprop.
         """
-
         hidden_states = hidden_states.contiguous()
-
         if self.self_attn_mask_type != "causal" and attention_mask is not None:
             assert (
                 attention_mask.dtype == torch.bool
@@ -1179,6 +1185,7 @@ class TransformerLayer(torch.nn.Module):
             inference_params=inference_params,
             is_first_microbatch=is_first_microbatch,
             checkpoint_core_attention=checkpoint_core_attention,
+            use_bf16_fprop=use_bf16_fprop,
         )
         if self.apply_residual_connection_post_layernorm and not self.output_layernorm:
             attention_output, attention_bias, residual = self_attention_outputs
@@ -1217,6 +1224,7 @@ class TransformerLayer(torch.nn.Module):
                 encoder_output=encoder_output,
                 is_first_microbatch=is_first_microbatch,
                 checkpoint_core_attention=checkpoint_core_attention,
+                use_bf16_fprop=use_bf16_fprop,
             )
             if self.apply_residual_connection_post_layernorm:
                 attention_output, attention_bias, residual = inter_attention_outputs
@@ -1231,7 +1239,7 @@ class TransformerLayer(torch.nn.Module):
 
         # MLP.
         mlp_outputs = self.layernorm_mlp(
-            bda_output, is_first_microbatch=is_first_microbatch
+            bda_output, is_first_microbatch=is_first_microbatch, use_bf16_fprop=use_bf16_fprop,
         )
         if self.apply_residual_connection_post_layernorm:
             mlp_output, mlp_bias, residual = mlp_outputs
