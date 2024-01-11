@@ -51,6 +51,8 @@ from ..jit import no_torch_dynamo
 from ..float8_tensor import Float8Tensor
 from ._common import _apply_normalization
 
+if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+    from ._debug import clip_to_fp8
 
 __all__ = ["LayerNormMLP"]
 
@@ -351,9 +353,16 @@ class _LayerNormMLP(torch.autograd.Function):
                 fp8_meta["scaling_fwd"].amax_history[0][tex.FP8FwdTensors.GEMM1_WEIGHT] = \
                     torch.amax(fc1_weight).float()
 
+            if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+                fc1_weight_modified = clip_to_fp8(fc1_weight, e5m2=False)
+                ln_out_total_modified = clip_to_fp8(ln_out_total_total, e5m2=False)
+            else:
+                fc1_weight_modified = fc1_weight
+                ln_out_total_modified = ln_out_total
+
             fc1_outputs = tex.gemm(
-                fc1_weight,
-                ln_out_total,
+                fc1_weight_modified,
+                ln_out_total_modified,
                 activation_dtype,
                 get_workspace(),
                 bias=fc1_bias,
@@ -400,9 +409,17 @@ class _LayerNormMLP(torch.autograd.Function):
                 dim_size = list(gelu_out.size())
                 dim_size[1] = fc2_weight.size(0)
                 fc2_out = torch.empty(dim_size, dtype=activation_dtype, device=gelu_out.device)
+
+            if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+                fc2_weight_modified = clip_to_fp8(fc2_weight, e5m2=False)
+                gelu_out_modified = clip_to_fp8(gelu_out, e5m2=False)
+            else:
+                fc2_weight_modified = fc2_weight
+                gelu_out_modified = gelu_out
+
             _ = tex.gemm(
-                fc2_weight,
-                gelu_out,
+                fc2_weight_modified,
+                gelu_out_modified,
                 activation_dtype,
                 get_workspace(),
                 bias=fc2_bias,
@@ -714,9 +731,16 @@ class _LayerNormMLP(torch.autograd.Function):
                 )
             else:
                 # FC2 DGRAD; Unconditional
+                if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+                    fc2_weight_modified = clip_to_fp8(fc2_weight, e5m2=False)
+                    grad_output_modified = clip_to_fp8(grad_output, e5m2=True)
+                else:
+                    fc2_weight_modified = fc2_weight
+                    grad_output_modified = grad_output
+
                 fc2_dgrad, _, _ = tex.gemm(
-                    fc2_weight,
-                    grad_output,
+                    fc2_weight_modified,
+                    grad_output_modified,
                     ctx.activation_dtype,
                     get_workspace(),
                     layout="NN",
@@ -729,9 +753,16 @@ class _LayerNormMLP(torch.autograd.Function):
 
                 # FC2 WGRAD
                 if fc2_weight.requires_grad:
+                    if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+                        gelu_out_modified = clip_to_fp8(gelu_out, e5m2=False)
+                        grad_output_modified = clip_to_fp8(grad_output, e5m2=True)
+                    else:
+                        gelu_out_modified = gelu_out
+                        grad_output_modified = grad_output
+
                     fc2_wgrad, fc2_bias_grad, _ = tex.gemm(
-                        gelu_out,
-                        grad_output,
+                        gelu_out_modified,
+                        grad_output_modified,
                         ctx.activation_dtype,
                         get_workspace(),
                         layout="NT",
@@ -770,9 +801,16 @@ class _LayerNormMLP(torch.autograd.Function):
                     )
 
                 # FC1 DGRAD: Unconditional
+                if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+                        fc1_weight_modified = clip_to_fp8(fc1_weight, e5m2=False)
+                        dgelu_modified = clip_to_fp8(dgelu, e5m2=True)
+                else:
+                    fc1_weight_modified = fc1_weight
+                    dgelu_modified = dgelu
+
                 _ = tex.gemm(
-                    fc1_weight,
-                    dgelu,
+                    fc1_weight_modified,
+                    dgelu_modified,
                     ctx.activation_dtype,
                     get_workspace(),
                     out=fc1_dgrad,
@@ -858,9 +896,18 @@ class _LayerNormMLP(torch.autograd.Function):
                         clear_tensor_data(ln_out_total_c, dgelu_no_fp8)
                 else:
                     # FC1 WGRAD
+                    if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+                        #print("USING CLIP IN LAYERNORM_MLP")
+                        # For NVLLM this is never called.
+                        ln_out_total_modified = clip_to_fp8(ln_out_total, e5m2=False)
+                        dgelu_modified = clip_to_fp8(dgelu, e5m2=True)
+                    else:
+                        ln_out_total_modified = ln_out_total
+                        dgelu_modified = dgelu
+
                     fc1_wgrad_outputs = tex.gemm(
-                        ln_out_total,
-                        dgelu,
+                        ln_out_total_modified,
+                        dgelu_modified,
                         ctx.activation_dtype,
                         get_workspace(),
                         layout="NT",
