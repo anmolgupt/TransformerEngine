@@ -250,6 +250,7 @@ class _Linear(torch.autograd.Function):
                 out = torch.empty(dim_size, dtype=activation_dtype, device=inputmat_total.device)
 
             if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+                #print("LINEAR CLIP TO DEBUG FWD")
                 weight_modified = clip_to_fp8(weight, e5m2=False)
                 inputmat_total_modified = clip_to_fp8(inputmat_total, e5m2=False)
             else:
@@ -402,6 +403,7 @@ class _Linear(torch.autograd.Function):
                     )
                 else:
                     if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+                        #print("LINEAR CLIP TO DEBUG BWD DGRAD")
                         grad_output_modified = clip_to_fp8(grad_output, e5m2=True)
                         weight_modified = clip_to_fp8(weight, e5m2=False)
                     else:
@@ -453,18 +455,9 @@ class _Linear(torch.autograd.Function):
                             use_split_accumulator=_2X_ACC_WGRAD,
                         )
                     else:
-                        if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
-                            # print("USING CLIP IN Linear")
-                            # For NVLLM this is never called.
-                            grad_output_modified = clip_to_fp8(grad_output, e5m2=True)
-                            inputmat_total_modified = clip_to_fp8(inputmat_total, e5m2=False)
-                        else:
-                            grad_output_modified = grad_output
-                            inputmat_total_modified = inputmat_total
-
                         wgrad, _, _ = gemm(
-                            inputmat_total_modified,
-                            grad_output_modified,
+                            inputmat_total,
+                            grad_output,
                             ctx.activation_dtype,
                             get_workspace(),
                             layout="NT",
@@ -474,9 +467,17 @@ class _Linear(torch.autograd.Function):
                         )
                 else:
                     # WGRAD
+                    if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+                        #print("LINEAR CLIP TO DEBUG BWD WGRAD")
+                        # For NVLLM this is never called.
+                        grad_output_modified = clip_to_fp8(grad_output, e5m2=True)
+                        inputmat_total_modified = clip_to_fp8(inputmat_total, e5m2=False)
+                    else:
+                        grad_output_modified = grad_output
+                        inputmat_total_modified = inputmat_total
                     wgrad, grad_bias, _ = gemm(
-                        inputmat_total,
-                        grad_output,
+                        inputmat_total_modified,
+                        grad_output_modified,
                         ctx.activation_dtype,
                         get_workspace(),
                         layout="NT",

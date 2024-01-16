@@ -356,6 +356,7 @@ class _LayerNormMLP(torch.autograd.Function):
                     torch.max(-amin, amax).float()
 
             if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+                print("LAYERNORM_MLP CLIP TO DEBUG FWD")
                 fc1_weight_modified = clip_to_fp8(fc1_weight, e5m2=False)
                 ln_out_total_modified = clip_to_fp8(ln_out_total_total, e5m2=False)
             else:
@@ -736,6 +737,7 @@ class _LayerNormMLP(torch.autograd.Function):
             else:
                 # FC2 DGRAD; Unconditional
                 if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+                    print("LAYERNORM_MLP CLIP TO DEBUG FC2 DGRAD")
                     fc2_weight_modified = clip_to_fp8(fc2_weight, e5m2=False)
                     grad_output_modified = clip_to_fp8(grad_output, e5m2=True)
                 else:
@@ -758,6 +760,7 @@ class _LayerNormMLP(torch.autograd.Function):
                 # FC2 WGRAD
                 if fc2_weight.requires_grad:
                     if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+                        print("LAYERNORM_MLP CLIP TO DEBUG FC2 WGRAD")
                         gelu_out_modified = clip_to_fp8(gelu_out, e5m2=False)
                         grad_output_modified = clip_to_fp8(grad_output, e5m2=True)
                     else:
@@ -806,8 +809,9 @@ class _LayerNormMLP(torch.autograd.Function):
 
                 # FC1 DGRAD: Unconditional
                 if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
-                        fc1_weight_modified = clip_to_fp8(fc1_weight, e5m2=False)
-                        dgelu_modified = clip_to_fp8(dgelu, e5m2=True)
+                    print("LAYERNORM_MLP CLIP TO DEBUG FC1 DGRAD")
+                    fc1_weight_modified = clip_to_fp8(fc1_weight, e5m2=False)
+                    dgelu_modified = clip_to_fp8(dgelu, e5m2=True)
                 else:
                     fc1_weight_modified = fc1_weight
                     dgelu_modified = dgelu
@@ -901,7 +905,7 @@ class _LayerNormMLP(torch.autograd.Function):
                 else:
                     # FC1 WGRAD
                     if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
-                        #print("USING CLIP IN LAYERNORM_MLP")
+                        print("LAYERNORM_MLP CLIP TO DEBUG FC1 WGRAD")
                         # For NVLLM this is never called.
                         ln_out_total_modified = clip_to_fp8(ln_out_total, e5m2=False)
                         dgelu_modified = clip_to_fp8(dgelu, e5m2=True)
