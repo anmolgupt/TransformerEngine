@@ -45,6 +45,7 @@ from ._common import _apply_normalization
 from ..float8_tensor import Float8Tensor
 
 if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+    print("TE DEBUG IS SET for commit d76118d")
     from ._debug import clip_to_fp8
 
 __all__ = ["LayerNormLinear"]
@@ -229,7 +230,7 @@ class _LayerNormLinear(torch.autograd.Function):
                     torch.amax(weight).float()
 
             if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
-                #print("USING CLIP IN LAYERNORM_Linear")
+                #print("USING CLIP IN LAYERNORM_Linear FWD")
                 weight_modified = clip_to_fp8(weight, e5m2=False)
                 ln_out_total_modified = clip_to_fp8(ln_out_total, e5m2=False)
             else:
@@ -409,6 +410,7 @@ class _LayerNormLinear(torch.autograd.Function):
             else:
                 # DGRAD: Evaluated unconditionally to feed into Linear backward
                 if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+                    #print("CLIP TO DEBUG DGRAD BWD")
                     weight_modified = clip_to_fp8(weight, e5m2=False)
                     grad_output_modified = clip_to_fp8(grad_output, e5m2=True)
                 else:
@@ -483,16 +485,9 @@ class _LayerNormLinear(torch.autograd.Function):
                             TE_DType[ctx.activation_dtype],
                         )
 
-                        if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
-                            ln_out_total_c_modified = clip_to_fp8(ln_out_total_c, e5m2=False)
-                            grad_output_modified = clip_to_fp8(grad_output, e5m2=True)
-                        else:
-                            ln_out_total_c_modified = ln_out_total_c
-                            grad_output_modified = grad_output
-
                         wgrad, _, _ = tex.gemm(
-                            ln_out_total_c_modified,
-                            grad_output_modified,
+                            ln_out_total_c,
+                            grad_output,
                             ctx.activation_dtype,
                             get_workspace(),
                             layout="NT",
@@ -506,10 +501,17 @@ class _LayerNormLinear(torch.autograd.Function):
                         )
                         clear_tensor_data(ln_out_total_c)
                 else:
+                    if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
+                        #print("CLIP TO DEBUG WGRAD BWD")
+                        ln_out_total_modified = clip_to_fp8(ln_out_total, e5m2=False)
+                        grad_output_modified = clip_to_fp8(grad_output, e5m2=True)
+                    else:
+                        ln_out_total_modified = ln_out_total
+                        grad_output_modified = grad_output
                     # WGRAD
                     wgrad, grad_bias, _ = tex.gemm(
-                        ln_out_total,
-                        grad_output,
+                        ln_out_total_modified,
+                        grad_output_modified,
                         ctx.activation_dtype,
                         get_workspace(),
                         layout="NT",
