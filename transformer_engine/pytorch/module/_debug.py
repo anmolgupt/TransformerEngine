@@ -16,7 +16,7 @@ def set_current_amax(x, x_fp8_format, fp8_meta_tensor, tensor_type):
     #print("Calling fp8_cast_transpose_fused")
     amax_x = torch.max(torch.abs(x)).float()
     #print("AMAX VAL: ", amax_x)
-    if amax_x > 0.0 and torch.isfinite(amax_x)
+    if amax_x > 0.0 and torch.isfinite(amax_x):
         if x_fp8_format==tex.DType.kFloat8E5M2:
             fp8_meta_scale = 57344. / amax_x
         else:
