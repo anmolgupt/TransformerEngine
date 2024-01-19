@@ -21,6 +21,10 @@ def cast_to_fp8(
 ) -> Optional[torch.Tensor]:
     """Cast input to FP8"""
 
+    if int(os.getenv("NVTE_DEBUG_CURR_AMAX", "0")):
+        #print("Called Method: cast_to_fp8")
+        set_current_amax(inp, otype, fp8_meta_tensor, fp8_tensor)
+
     if out is not None:
         tex.cast_to_fp8_noalloc(
             inp,
@@ -31,9 +35,6 @@ def cast_to_fp8(
             otype
         )
         return None
-    if int(os.getenv("NVTE_DEBUG_CURR_AMAX", "0")):
-        #print("Called Method: cast_to_fp8")
-        set_current_amax(inp, otype, fp8_meta_tensor, fp8_tensor)
 
     return torch.ops.tex_ts.cast_to_fp8_ts(
         inp,
