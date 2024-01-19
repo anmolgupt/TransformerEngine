@@ -111,6 +111,11 @@ class _Linear(torch.autograd.Function):
         inputmat_no_fp8 = inputmat
         if fp8:
             fp8_dtype_forward = get_fp8_te_dtype(fp8_meta["recipe"], fprop_tensor=True)
+            #print("BEFORE fp8_meta scale: ", fp8_meta["scaling_fwd"].scale[tex.FP8FwdTensors.GEMM1_INPUT])
+            #print("BEFORE fp8_meta scale inv: ", fp8_meta["scaling_fwd"].scale_inv[tex.FP8FwdTensors.GEMM1_INPUT])
+
+            #os.environ["NVTE_DEBUG_CURR_AMAX"] = "1"
+
             if (
                 not fp8_meta["recipe"].override_linear_precision.wgrad
                 and is_grad_enabled
@@ -132,6 +137,9 @@ class _Linear(torch.autograd.Function):
                     tex.FP8FwdTensors.GEMM1_INPUT,
                     fp8_dtype_forward,
                 )
+            #print("AFTER fp8_meta scale: ", fp8_meta["scaling_fwd"].scale[tex.FP8FwdTensors.GEMM1_INPUT])
+            #print("AFTER fp8_meta scale inv: ", fp8_meta["scaling_fwd"].scale_inv[tex.FP8FwdTensors.GEMM1_INPUT])
+            #os.environ["NVTE_DEBUG_CURR_AMAX"] = "0"
 
         # Column Parallel Linear
         if parallel_mode == "column" and sequence_parallel:

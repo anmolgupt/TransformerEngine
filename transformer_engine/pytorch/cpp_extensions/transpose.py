@@ -7,7 +7,9 @@ from typing import Optional, Tuple, Union
 import torch
 import transformer_engine_extensions as tex
 from ..constants import TE_DType
-
+import os
+#if int(os.getenv("NVTE_DEBUG_CURR_AMAX", "0")):
+from ..module._debug import set_current_amax
 
 __all__ = ['fp8_cast_transpose_fused',
            'fp8_cast_transpose_bgrad_fused',
@@ -33,6 +35,10 @@ def fp8_cast_transpose_fused(
         )
         return_outputs = True
 
+    if int(os.getenv("NVTE_DEBUG_CURR_AMAX", "0")):
+        #print("Called Method: fp8_cast_transpose_fused")
+        set_current_amax(inp, otype, fp8_meta_tensor, fp8_tensor)
+
     tex.fused_cast_transpose(
         inp,
         fp8_meta_tensor.scale[fp8_tensor],
@@ -42,6 +48,8 @@ def fp8_cast_transpose_fused(
         transpose_out,
         otype,
     )
+    #if int(os.getenv("NVTE_DEBUG_CURR_AMAX", "0")):
+    #    print("After Amax history: ", fp8_meta_tensor.amax_history[0][fp8_tensor])
 
     if return_outputs:
         return cast_out, transpose_out
@@ -55,6 +63,9 @@ def fp8_cast_transpose_bgrad_fused(
     otype: tex.DType,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Cast + Transpose + BGRAD with FP8 output"""
+    if int(os.getenv("NVTE_DEBUG_CURR_AMAX", "0")):
+        print("Called Method: fp8_cast_transpose_bgrad_fused")
+        set_current_amax(inp, otype, fp8_meta_tensor, fp8_tensor)
     return tex.fused_cast_transpose_bgrad(
         inp,
         fp8_meta_tensor.scale[fp8_tensor],
@@ -90,6 +101,9 @@ def fp8_cast_transpose_bgrad_dgelu_fused(
     otype: tex.DType,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Cast + Transpose + BGRAD + DGELU with FP8 output"""
+    if int(os.getenv("NVTE_DEBUG_CURR_AMAX", "0")):
+        print("Called Method: fp8_cast_transpose_bgrad_dgelu_fused: ", otype, fp8_tensor)
+        #set_current_amax(inp, otype, fp8_meta_tensor, fp8_tensor)
     return tex.fused_cast_transpose_bgrad_dgelu(
         grad_output,
         gelu_input,

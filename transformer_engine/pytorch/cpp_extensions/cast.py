@@ -6,11 +6,11 @@
 from typing import Optional, Union
 import torch
 import transformer_engine_extensions as tex
-
+import os
+from ..module._debug import set_current_amax
 
 __all__ = ['cast_to_fp8',
            'cast_from_fp8']
-
 
 def cast_to_fp8(
     inp: torch.Tensor,
@@ -31,6 +31,10 @@ def cast_to_fp8(
             otype
         )
         return None
+    if int(os.getenv("NVTE_DEBUG_CURR_AMAX", "0")):
+        #print("Called Method: cast_to_fp8")
+        set_current_amax(inp, otype, fp8_meta_tensor, fp8_tensor)
+
     return torch.ops.tex_ts.cast_to_fp8_ts(
         inp,
         fp8_meta_tensor.scale,
