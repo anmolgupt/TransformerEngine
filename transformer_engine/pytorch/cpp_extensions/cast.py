@@ -9,6 +9,9 @@ import transformer_engine_extensions as tex
 import os
 from ..module._debug import set_current_amax
 
+if int(os.getenv("NVTE_DEBUG_CURR_AMAX", "0")):
+    print("Cast cpp extenstion: NVTE_DEBUG_CURR_AMAX is set")
+
 __all__ = ['cast_to_fp8',
            'cast_from_fp8']
 
