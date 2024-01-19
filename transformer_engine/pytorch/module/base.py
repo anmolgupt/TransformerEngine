@@ -38,7 +38,12 @@ from ..cpp_extensions import (
 from ..constants import dist_group_type
 from ..float8_tensor import Float8Tensor
 
-_2X_ACC_FPROP = False
+if int(os.getenv("NVTE_DEBUG_FPROP_SPLIT_ACCUM", "0")):
+    print("Base: using split accum for fprop as well")
+    _2X_ACC_FPROP = True
+else:
+    _2X_ACC_FPROP = False
+
 _2X_ACC_DGRAD = True
 _2X_ACC_WGRAD = True
 _cublas_workspace = None
