@@ -358,7 +358,7 @@ class _LayerNormMLP(torch.autograd.Function):
             if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
                 print("LAYERNORM_MLP CLIP TO DEBUG FWD")
                 fc1_weight_modified = clip_to_fp8(fc1_weight, e5m2=False)
-                ln_out_total_modified = clip_to_fp8(ln_out_total_total, e5m2=False)
+                ln_out_total_modified = clip_to_fp8(ln_out_total, e5m2=False)
             else:
                 fc1_weight_modified = fc1_weight
                 ln_out_total_modified = ln_out_total
