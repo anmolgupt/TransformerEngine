@@ -143,12 +143,24 @@ class _LayerNormLinear(torch.autograd.Function):
         if return_layernorm_output:
             ln_out_return = ln_out
             if fp8:
-                ln_out = tex.cast_to_fp8(
+                ln_out_fp8 = tex.cast_to_fp8(
                     ln_out,
                     fp8_meta["scaling_fwd"],
                     tex.FP8FwdTensors.GEMM1_INPUT,
                     fp8_dtype_forward,
                 )
+                if not int(os.getenv("NVTE_DEBUG_FPROP_IN_BF16", "0")):
+                    ln_out = ln_out_fp8
+        else:
+            if fp8 and int(os.getenv("NVTE_DEBUG_FPROP_IN_BF16", "0")):
+                ln_out_fp8 = ln_out
+                ln_out = tex.cast_from_fp8(
+                            ln_out,
+                            ctx.fp8_meta["scaling_fwd"],
+                            tex.FP8FwdTensors.GEMM1_INPUT,
+                            fp8_dtype_forward,
+                            TE_DType[activation_dtype],
+                        )
         # Column Parallel Linear
         if ub_split_ag or ub_atomic_gemm_ag:
             ln_out_total = ub_obj_lnout.get_ubuf_output(1)
@@ -198,24 +210,38 @@ class _LayerNormLinear(torch.autograd.Function):
 
             ub_algo = tex.UbufOverlapAlgo.SPLIT_PIPELINED_AG if ub_split_ag else None
             ub_algo = tex.UbufOverlapAlgo.ATOMIC_GEMM_AG if ub_atomic_gemm_ag else ub_algo
-            out, _ = tex.fp8_gemm(
-                weight_fp8._data,
-                fp8_meta["scaling_fwd"].scale_inv,
-                tex.FP8FwdTensors.GEMM1_WEIGHT,
-                fp8_dtype_forward,
-                ln_out_total,
-                fp8_meta["scaling_fwd"].scale_inv,
-                tex.FP8FwdTensors.GEMM1_INPUT,
-                fp8_dtype_forward,
-                activation_dtype,
-                get_workspace(),
-                bias=bias,
-                use_bias=use_bias,
-                use_split_accumulator=_2X_ACC_FPROP,
-                ub_algo=ub_algo,
-                ub=ub_obj_lnout if (ub_split_ag or ub_atomic_gemm_ag) else None,
-                extra_output_tensor=ln_out if (ub_split_ag or ub_atomic_gemm_ag) else None,
-            )
+            if not int(os.getenv("NVTE_DEBUG_FPROP_IN_BF16", "0")):
+                out, _ = tex.fp8_gemm(
+                    weight_fp8._data,
+                    fp8_meta["scaling_fwd"].scale_inv,
+                    tex.FP8FwdTensors.GEMM1_WEIGHT,
+                    fp8_dtype_forward,
+                    ln_out_total,
+                    fp8_meta["scaling_fwd"].scale_inv,
+                    tex.FP8FwdTensors.GEMM1_INPUT,
+                    fp8_dtype_forward,
+                    activation_dtype,
+                    get_workspace(),
+                    bias=bias,
+                    use_bias=use_bias,
+                    use_split_accumulator=_2X_ACC_FPROP,
+                    ub_algo=ub_algo,
+                    ub=ub_obj_lnout if (ub_split_ag or ub_atomic_gemm_ag) else None,
+                    extra_output_tensor=ln_out if (ub_split_ag or ub_atomic_gemm_ag) else None,
+                )
+            else:
+                out, _, _ = tex.gemm(
+                    weight,
+                    ln_out_total,
+                    activation_dtype,
+                    get_workspace(),
+                    bias=bias,
+                    use_bias=use_bias,
+                    ub_algo=tex.UbufOverlapAlgo.SPLIT_PIPELINED_AG if ub_split_ag else None,
+                    ub=ub_obj_lnout if ub_split_ag else None,
+                    extra_output_tensor=ln_out if ub_split_ag else None,
+                )
+
         else:
             # Cast for native AMP
             weight = cast_if_needed(weight, activation_dtype)
@@ -257,7 +283,7 @@ class _LayerNormLinear(torch.autograd.Function):
                 rsigma,
                 weight,
                 weight_t_fp8,
-                ln_out,
+                ln_out_fp8 if int(os.getenv("NVTE_DEBUG_FPROP_IN_BF16", "0")) else ln_out,
                 fp8_meta["scaling_fwd"].scale_inv.clone() if fp8 else None,
             )
 
@@ -370,7 +396,7 @@ class _LayerNormLinear(torch.autograd.Function):
             else:
                 dgrad = torch.empty(dgrad_size, dtype=ctx.activation_dtype, device=weight.device)
 
-            if ctx.fp8:
+            if ctx.fp8 and (not int(os.getenv("NVTE_DEBUG_DGRAD_IN_BF16", "0"))):
                 fp8_dtype_forward = get_fp8_te_dtype(
                     ctx.fp8_meta["recipe"], fprop_tensor=True
                 )

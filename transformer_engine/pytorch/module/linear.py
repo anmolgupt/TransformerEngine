@@ -51,6 +51,12 @@ import os
 if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
     from ._debug import clip_to_fp8
 
+if int(os.getenv("NVTE_DEBUG_DGRAD_IN_BF16", "0")):
+    print("Linear Layer: Dgrad in 16-bit Precision")
+
+if int(os.getenv("NVTE_DEBUG_FPROP_IN_BF16", "0")):
+    print("Linear Layer: Fprop in 16-bit Precision")
+
 __all__ = ["Linear"]
 
 
@@ -123,7 +129,7 @@ class _Linear(torch.autograd.Function):
                 and not sequence_parallel
             ):
                 # FP8 input for forward, FP8 input transpose for backward wgrad
-                inputmat, inputmat_t = fp8_cast_transpose_fused(
+                inputmat_fp8, inputmat_t = fp8_cast_transpose_fused(
                     inputmat,
                     fp8_meta["scaling_fwd"],
                     tex.FP8FwdTensors.GEMM1_INPUT,
@@ -131,12 +137,14 @@ class _Linear(torch.autograd.Function):
                 )
             else:
                 # FP8 input for forward
-                inputmat = cast_to_fp8(
+                inputmat_fp8 = cast_to_fp8(
                     inputmat,
                     fp8_meta["scaling_fwd"],
                     tex.FP8FwdTensors.GEMM1_INPUT,
                     fp8_dtype_forward,
                 )
+            if not int(os.getenv("NVTE_DEBUG_FPROP_IN_BF16", "0")):
+                inputmat = inputmat_fp8
             #print("AFTER fp8_meta scale: ", fp8_meta["scaling_fwd"].scale[tex.FP8FwdTensors.GEMM1_INPUT])
             #print("AFTER fp8_meta scale inv: ", fp8_meta["scaling_fwd"].scale_inv[tex.FP8FwdTensors.GEMM1_INPUT])
             #os.environ["NVTE_DEBUG_CURR_AMAX"] = "0"
@@ -208,28 +216,42 @@ class _Linear(torch.autograd.Function):
 
             ub_algo=tex.UbufOverlapAlgo.ATOMIC_GEMM_RS if ub_atomic_gemm_rs else None
             ub_algo=tex.UbufOverlapAlgo.SPLIT_PIPELINED_RS if ub_split_rs else ub_algo
-            _ = fp8_gemm(
-                weight_fp8._data,
-                fp8_meta["scaling_fwd"].scale_inv,
-                tex.FP8FwdTensors.GEMM1_WEIGHT,
-                fp8_dtype_forward,
-                inputmat_total,
-                fp8_meta["scaling_fwd"].scale_inv,
-                tex.FP8FwdTensors.GEMM1_INPUT,
-                fp8_dtype_forward,
-                proj_out_pttype,
-                get_workspace(),
-                bias=bias,
-                use_bias=use_bias,
-                use_split_accumulator=_2X_ACC_FPROP,
-                out=out,
-                ub_algo=ub_algo,
-                ub=ub_obj_projout if (ub_split_rs or ub_atomic_gemm_rs) else None,
-                extra_output_tensor=rs_out if (ub_split_rs or ub_atomic_gemm_rs) else None,
-                out_index=proj_out_index,
-                fp8_meta_tensor = meta_tensor,
-                D_dtype = proj_out_tetype,
-            )
+            if not int(os.getenv("NVTE_DEBUG_FPROP_IN_BF16", "0")):
+                _ = fp8_gemm(
+                    weight_fp8._data,
+                    fp8_meta["scaling_fwd"].scale_inv,
+                    tex.FP8FwdTensors.GEMM1_WEIGHT,
+                    fp8_dtype_forward,
+                    inputmat_total,
+                    fp8_meta["scaling_fwd"].scale_inv,
+                    tex.FP8FwdTensors.GEMM1_INPUT,
+                    fp8_dtype_forward,
+                    proj_out_pttype,
+                    get_workspace(),
+                    bias=bias,
+                    use_bias=use_bias,
+                    use_split_accumulator=_2X_ACC_FPROP,
+                    out=out,
+                    ub_algo=ub_algo,
+                    ub=ub_obj_projout if (ub_split_rs or ub_atomic_gemm_rs) else None,
+                    extra_output_tensor=rs_out if (ub_split_rs or ub_atomic_gemm_rs) else None,
+                    out_index=proj_out_index,
+                    fp8_meta_tensor = meta_tensor,
+                    D_dtype = proj_out_tetype,
+                )
+            else:
+                _ = gemm(
+                    weight,
+                    inputmat_total,
+                    activation_dtype,
+                    get_workspace(),
+                    bias=bias,
+                    use_bias=use_bias,
+                    out=out,
+                    ub_algo=tex.UbufOverlapAlgo.SPLIT_PIPELINED_RS if ub_split_rs else None,
+                    ub=ub_obj_projout if ub_split_rs else None,
+                    extra_output_tensor=rs_out if ub_split_rs else None,
+                )
         else:
             # Cast for native AMP
             weight = cast_if_needed(weight, activation_dtype)
@@ -280,10 +302,16 @@ class _Linear(torch.autograd.Function):
             saved_inputmat_t = None
             if weight.requires_grad:
                 if fp8 and not fp8_meta["recipe"].override_linear_precision.wgrad:
-                    if inputmat_t is None:
-                        saved_inputmat = inputmat
+                    if int(os.getenv("NVTE_DEBUG_FPROP_IN_BF16", "0")):
+                        if inputmat_t is None:
+                            saved_inputmat = inputmat_fp8
+                        else:
+                            saved_inputmat_t = inputmat_t
                     else:
-                        saved_inputmat_t = inputmat_t
+                        if inputmat_t is None:
+                            saved_inputmat = inputmat
+                        else:
+                            saved_inputmat_t = inputmat_t
                 else:
                     saved_inputmat = inputmat_no_fp8
             ctx.save_for_backward(
@@ -390,7 +418,7 @@ class _Linear(torch.autograd.Function):
             ub_algo = tex.UbufOverlapAlgo.SPLIT_PIPELINED_AG if ctx.ub_split_ag else None
             ub_algo = tex.UbufOverlapAlgo.ATOMIC_GEMM_AG if ctx.ub_atomic_gemm_ag else ub_algo
             if ctx.requires_dgrad:
-                if ctx.fp8:
+                if ctx.fp8 and (not int(os.getenv("NVTE_DEBUG_DGRAD_IN_BF16", "0"))):
                     dgrad, _ = fp8_gemm(
                         weight_t_fp8._data,
                         fwd_scale_inverses,
