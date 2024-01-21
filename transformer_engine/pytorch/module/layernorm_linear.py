@@ -156,7 +156,7 @@ class _LayerNormLinear(torch.autograd.Function):
                 ln_out_fp8 = ln_out
                 ln_out = tex.cast_from_fp8(
                             ln_out,
-                            ctx.fp8_meta["scaling_fwd"],
+                            fp8_meta["scaling_fwd"],
                             tex.FP8FwdTensors.GEMM1_INPUT,
                             fp8_dtype_forward,
                             TE_DType[activation_dtype],
@@ -396,7 +396,7 @@ class _LayerNormLinear(torch.autograd.Function):
             else:
                 dgrad = torch.empty(dgrad_size, dtype=ctx.activation_dtype, device=weight.device)
 
-            if ctx.fp8 and (not int(os.getenv("NVTE_DEBUG_DGRAD_IN_BF16", "0"))):
+            if ctx.fp8:
                 fp8_dtype_forward = get_fp8_te_dtype(
                     ctx.fp8_meta["recipe"], fprop_tensor=True
                 )
@@ -413,26 +413,40 @@ class _LayerNormLinear(torch.autograd.Function):
                     ub_obj_dgrad.set_ubuf_scale_inv(meta_tensor.scale_inv[out_index])
 
                 # DGRAD: Evaluated unconditionally to feed into Linear backward
-                _ = tex.fp8_gemm(
-                    weight_t_fp8._data,
-                    fwd_scale_inverses,
-                    tex.FP8FwdTensors.GEMM1_WEIGHT,
-                    fp8_dtype_forward,
-                    grad_output_c,
-                    ctx.fp8_meta["scaling_bwd"].scale_inv,
-                    tex.FP8BwdTensors.GRAD_OUTPUT1,
-                    fp8_dtype_backward,
-                    out_type,
-                    get_workspace(),
-                    out=dgrad,
-                    use_split_accumulator=_2X_ACC_DGRAD,
-                    ub_algo=tex.UbufOverlapAlgo.BULK_OVERLAP_AG if ctx.ub_bulk_dgrad else None,
-                    ub=ub_obj_lnout if ctx.ub_bulk_dgrad else None,
-                    out_index=out_index,
-                    fp8_meta_tensor = meta_tensor,
-                    D_dtype = out_te_type,
-                )
-                clear_tensor_data(grad_output_c)
+                if not int(os.getenv("NVTE_DEBUG_DGRAD_IN_BF16", "0")):
+                    _ = tex.fp8_gemm(
+                        weight_t_fp8._data,
+                        fwd_scale_inverses,
+                        tex.FP8FwdTensors.GEMM1_WEIGHT,
+                        fp8_dtype_forward,
+                        grad_output_c,
+                        ctx.fp8_meta["scaling_bwd"].scale_inv,
+                        tex.FP8BwdTensors.GRAD_OUTPUT1,
+                        fp8_dtype_backward,
+                        out_type,
+                        get_workspace(),
+                        out=dgrad,
+                        use_split_accumulator=_2X_ACC_DGRAD,
+                        ub_algo=tex.UbufOverlapAlgo.BULK_OVERLAP_AG if ctx.ub_bulk_dgrad else None,
+                        ub=ub_obj_lnout if ctx.ub_bulk_dgrad else None,
+                        out_index=out_index,
+                        fp8_meta_tensor = meta_tensor,
+                        D_dtype = out_te_type,
+                    )
+                    clear_tensor_data(grad_output_c)
+                else:
+                    _, _, _ = tex.gemm(
+                        weight,
+                        grad_output,
+                        ctx.activation_dtype,
+                        get_workspace(),
+                        out=dgrad,
+                        layout="NN",
+                        grad=True,
+                        ub_algo=tex.UbufOverlapAlgo.BULK_OVERLAP_AG if ctx.ub_bulk_dgrad else None,
+                        ub=ub_obj_lnout if ctx.ub_bulk_dgrad else None
+                    )
+
             else:
                 # DGRAD: Evaluated unconditionally to feed into Linear backward
                 if int(os.getenv("NVTE_DEBUG_CLIP_TO_FP8", "0")):
