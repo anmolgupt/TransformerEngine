@@ -102,6 +102,7 @@ class _LayerNormLinear(torch.autograd.Function):
 
         update_fp8_weights = is_first_microbatch is None or is_first_microbatch
 
+        need_bf16_for_debug = fp8 and (int(os.getenv("NVTE_DEBUG_FPROP_IN_BF16", "0")) or int(os.getenv("NVTE_DEBUG_CURR_AMAX", "0")))
         # Cast for native AMP
         inputmat = cast_if_needed(inputmat, activation_dtype)
         ln_weight = cast_if_needed(ln_weight, activation_dtype)
@@ -119,7 +120,7 @@ class _LayerNormLinear(torch.autograd.Function):
             ub_obj_lnout = get_ub(ub_name+"_fprop")
             ln_out = ub_obj_lnout.get_ubuf_output(0)
         else:
-            ln_out_dtype = torch.uint8 if (fp8 and not return_layernorm_output) else inputmat.dtype
+            ln_out_dtype = torch.uint8 if (fp8 and not return_layernorm_output and not need_bf16_for_debug) else inputmat.dtype
             ln_out = torch.empty_like(inputmat, dtype=ln_out_dtype)
         if ub_atomic_gemm_ag:
             assert fp8, "AtomicGemm overlap supported only for FP8 GEMM."
@@ -131,7 +132,7 @@ class _LayerNormLinear(torch.autograd.Function):
                                                   ln_weight,
                                                   ln_bias,
                                                   eps,
-                                                  fp8 and not return_layernorm_output,
+                                                  fp8 and not return_layernorm_output and not need_bf16_for_debug,
                                                   fp8_meta,
                                                   normalization,
                                                   fwd_ln_sm_margin,
@@ -142,25 +143,17 @@ class _LayerNormLinear(torch.autograd.Function):
         # of an extra fp8 cast.
         if return_layernorm_output:
             ln_out_return = ln_out
-            if fp8:
-                ln_out_fp8 = tex.cast_to_fp8(
-                    ln_out,
-                    fp8_meta["scaling_fwd"],
-                    tex.FP8FwdTensors.GEMM1_INPUT,
-                    fp8_dtype_forward,
-                )
-                if not int(os.getenv("NVTE_DEBUG_FPROP_IN_BF16", "0")):
-                    ln_out = ln_out_fp8
-        else:
-            if fp8 and int(os.getenv("NVTE_DEBUG_FPROP_IN_BF16", "0")):
-                ln_out_fp8 = ln_out
-                ln_out = tex.cast_from_fp8(
-                            ln_out,
-                            fp8_meta["scaling_fwd"],
-                            tex.FP8FwdTensors.GEMM1_INPUT,
-                            fp8_dtype_forward,
-                            TE_DType[activation_dtype],
-                        )
+
+        if fp8 and (return_layernorm_output or need_bf16_for_debug):
+            ln_out_fp8 = tex.cast_to_fp8(
+                ln_out,
+                fp8_meta["scaling_fwd"],
+                tex.FP8FwdTensors.GEMM1_INPUT,
+                fp8_dtype_forward,
+            )
+            if not int(os.getenv("NVTE_DEBUG_FPROP_IN_BF16", "0")):
+                ln_out = ln_out_fp8
+
         # Column Parallel Linear
         if ub_split_ag or ub_atomic_gemm_ag:
             ln_out_total = ub_obj_lnout.get_ubuf_output(1)
